@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Harshavardhanjo/cadence-bench/internal/stats"
+	"github.com/Harshavardhanjo/cadence-bench/stats"
 )
 
 // readSink absorbs the clock readings taken while timing them. Discarding them

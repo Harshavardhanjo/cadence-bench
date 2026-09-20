@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Harshavardhanjo/cadence-bench/internal/stats"
+	"github.com/Harshavardhanjo/cadence-bench/stats"
 )
 
 // Probing is slow on hosts with a coarse timer, so the suite shares one

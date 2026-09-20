@@ -4,6 +4,12 @@
 // back in the same unit. Throughout cadence-bench those samples are
 // nanoseconds, kept as float64 so that means and standard deviations do not
 // need a separate integer/float path.
+//
+// It is exported rather than internal because the sibling jitter-bench measures
+// the receive side of the same audio path and needs the identical percentile
+// definitions. Two benchmarks that report percentiles computed differently
+// cannot be read side by side, which is the whole reason for sharing this
+// rather than copying it.
 package stats
 
 import (

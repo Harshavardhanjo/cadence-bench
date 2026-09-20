@@ -15,7 +15,7 @@ import (
 
 	"github.com/Harshavardhanjo/cadence-bench/internal/load"
 	"github.com/Harshavardhanjo/cadence-bench/internal/pacer"
-	"github.com/Harshavardhanjo/cadence-bench/internal/stats"
+	"github.com/Harshavardhanjo/cadence-bench/stats"
 )
 
 // Scenario is the background pressure a measurement runs under.
