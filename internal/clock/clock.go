@@ -128,11 +128,23 @@ func measureReadCost(samples int) stats.Summary {
 	return stats.Summarize(costs)
 }
 
+// resolvableRatio is how much finer than the period the clock has to be for
+// percentile comparisons between strategies to mean anything.
+//
+// A hundredth is chosen because the interesting differences are much smaller
+// than the period: at a 20ms cadence, a correct deadline-based loop and a
+// spin-tail loop are expected to sit tens of microseconds apart, not
+// milliseconds. A clock quantised to a tenth of the period would round both to
+// the same value while still producing a table full of confident-looking
+// figures. Hosts with a modern monotonic clock read in tens of nanoseconds and
+// clear this by three orders of magnitude; the hosts it excludes are the ones
+// where the runtime is falling back to a coarse system timer.
+const resolvableRatio = 100
+
 // MinimumResolvablePeriod returns the shortest period whose lateness this host
-// can measure to a tenth of a period, which is the coarsest quantisation at
-// which percentile comparisons between strategies mean anything.
+// can measure finely enough to compare strategies against each other.
 func (c Characteristics) MinimumResolvablePeriod() time.Duration {
-	return time.Duration(c.Resolution.P50 * 10)
+	return time.Duration(c.Resolution.P50 * resolvableRatio)
 }
 
 // CheckAdequate reports whether the host can support measurements at the given
@@ -145,8 +157,8 @@ func (c Characteristics) MinimumResolvablePeriod() time.Duration {
 func (c Characteristics) CheckAdequate(period time.Duration) error {
 	if min := c.MinimumResolvablePeriod(); period < min {
 		return fmt.Errorf(
-			"clock resolution is %.0fns, which quantises every measurement; a period of %v needs at least %v to be resolvable to a tenth of a period",
-			c.Resolution.P50, period, min)
+			"clock resolution is %v, which quantises every measurement; comparing strategies at a %v period needs a clock at least %d times finer, so the shortest period this host can measure is %v",
+			time.Duration(c.Resolution.P50), period, resolvableRatio, min)
 	}
 	return nil
 }

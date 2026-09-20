@@ -62,21 +62,29 @@ func TestMeasureDefaultsNonPositiveSampleCount(t *testing.T) {
 }
 
 func TestCheckAdequateRejectsPeriodsTheClockCannotResolve(t *testing.T) {
-	// A clock advancing in 1ms steps cannot resolve a tenth of a 1ms period.
+	// A clock advancing in 1ms steps is the Go 1.17 Windows case. It cannot
+	// resolve a 20ms period finely enough to separate strategies that differ by
+	// tens of microseconds, even though 1ms looks small next to 20ms.
 	coarse := Characteristics{Resolution: stats.Summary{P50: float64(time.Millisecond)}}
 
-	if err := coarse.CheckAdequate(time.Millisecond); err == nil {
-		t.Error("CheckAdequate accepted a 1ms period against a 1ms clock resolution")
+	if err := coarse.CheckAdequate(20 * time.Millisecond); err == nil {
+		t.Error("CheckAdequate accepted a 20ms period against a 1ms clock resolution")
 	}
-	if err := coarse.CheckAdequate(20 * time.Millisecond); err != nil {
-		t.Errorf("CheckAdequate rejected a 20ms period against a 1ms resolution: %v", err)
+	if err := coarse.CheckAdequate(200 * time.Millisecond); err != nil {
+		t.Errorf("CheckAdequate rejected a 200ms period against a 1ms resolution: %v", err)
+	}
+
+	// A host with a modern monotonic clock must not be blocked at 20ms.
+	fine := Characteristics{Resolution: stats.Summary{P50: 50}}
+	if err := fine.CheckAdequate(20 * time.Millisecond); err != nil {
+		t.Errorf("CheckAdequate rejected a 20ms period against a 50ns resolution: %v", err)
 	}
 }
 
-func TestMinimumResolvablePeriodIsTenQuanta(t *testing.T) {
+func TestMinimumResolvablePeriodScalesByResolvableRatio(t *testing.T) {
 	c := Characteristics{Resolution: stats.Summary{P50: 1000}}
 
-	if got, want := c.MinimumResolvablePeriod(), 10*time.Microsecond; got != want {
+	if got, want := c.MinimumResolvablePeriod(), resolvableRatio*time.Microsecond; got != want {
 		t.Errorf("MinimumResolvablePeriod = %v, want %v", got, want)
 	}
 }
