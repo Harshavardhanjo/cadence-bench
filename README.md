@@ -166,6 +166,9 @@ go test ./...
 go test -race ./...
 ```
 
+The race detector needs a C toolchain, which on Windows means installing one;
+CI runs it on all three platforms regardless.
+
 Timing-dependent tests assert the *shape* of the error rather than wall-clock
 figures, so they hold on hosts with very different timer granularity: drift is
 unbounded growth proportional to tick count, and a correct pacer's lateness stays
