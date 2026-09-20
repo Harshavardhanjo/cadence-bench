@@ -1,0 +1,90 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Timer and clock behaviour is a property of the OS and the Go runtime, not
+    # of this code, so the suite has to run on all three. The timing tests
+    # assert the shape of the error rather than wall-clock figures precisely so
+    # that they can.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: gofmt
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: go test -race
+        run: go test -race ./...
+
+      - name: go build
+        run: go build ./...
+
+  probe:
+    # Publishes each runner's clock resolution and sleep granularity into the
+    # job log. These are the figures that decide whether a host can measure a
+    # 20ms cadence at all, they differ sharply between operating systems and Go
+    # versions, and a hosted runner is a more honest source for them than any
+    # single development machine.
+    needs: test
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: characterise the host
+        run: go run ./cmd/cadence probe -samples 200 -period 20ms
+
+      - name: measure at a 20ms period
+        # Deliberately not forced. If a runner's clock cannot resolve a 20ms
+        # period this step fails, which is the correct outcome: it means any
+        # table produced here would be an artefact of the platform. A shared
+        # runner is noisy, so the figures in the log are indicative and the
+        # published results in the README come from a quiet host.
+        run: >
+          go run ./cmd/cadence run
+          -period 20ms -work 2ms -ticks 150 -warmup 30 -reps 3
+          -scenarios idle,cpu-contention
