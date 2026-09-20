@@ -1,0 +1,13 @@
+# build output
+/cadence
+/cadence.exe
+/bin/
+
+# measurement output (regenerate with `make run`)
+/results/*.json
+/results/*.csv
+
+# python
+__pycache__/
+*.pyc
+.venv/
