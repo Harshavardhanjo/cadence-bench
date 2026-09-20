@@ -50,41 +50,95 @@ Two derived figures matter more than the percentiles:
 Each configuration runs under four scenarios of increasing hostility: `idle`,
 `cpu-contention` (one busy goroutine per core), `gc-churn`, and both together.
 
-## Status of results
+## Results
 
-**No cross-strategy results table is published yet.** The development host fails
-the harness's own adequacy gate, and inventing numbers from it would defeat the
-point of building the thing.
+Measured on GitHub-hosted runners, Go 1.27.1, at a 20ms period with 2ms of
+simulated encode work: 150 measured ticks after 30 discarded, 3 repetitions. Each
+figure is the median across repetitions of that repetition's own statistic, with
+the range across repetitions in brackets.
 
-That host is Go 1.17.7 on Windows 11, and what it reports about itself is a
-finding in its own right:
+**Read the ordering, not the absolute numbers.** These are shared 3–4 core VMs,
+and `cpu-contention` runs one busy goroutine per core on a machine that is
+already sharing silicon, so it is a worst case rather than a typical one.
+Reproduce on your own hardware before quoting a figure.
 
-| property | measured |
-|---|---|
-| monotonic clock resolution | ~1.0ms (min 0.50ms, max 1.8ms) |
-| sleep granularity, 1ms requested | ~15.5ms |
-| monotonic clock read cost | ~5ns |
+### linux/amd64, 4 cores
 
-Windows' default timer quantum is 15.6ms and this Go version does not request a
-finer one, so `time.Sleep(20ms)` takes about 31ms — two quanta. **A 20ms cadence
-cannot be held by sleeping on this configuration at all**, regardless of how the
-loop is written. Separately, a monotonic clock that advances in ~1ms steps
-quantises every lateness sample to ~1ms, which makes any comparison between
-strategies that differ by tens of microseconds meaningless. `cadence run` exits
-non-zero rather than print that table; `-force` overrides it and records the
-reason in the report's `warnings`, so a forced run cannot be mistaken for a clean
-one.
+| strategy | scenario | median | p99 (min..max) | drift/tick | missed |
+|---|---|---|---|---|---|
+| sleep-delta | idle | 224.38ms | 385.50ms (383.93..385.96) | 2.16ms | 100.0% |
+| sleep-delta | cpu-contention | 2156.44ms | 3647.43ms (3619.54..3681.71) | 20.53ms | 100.0% |
+| absolute-deadline | idle | 519.6µs | 1.05ms (1.02..1.07) | −889ns | 0.0% |
+| absolute-deadline | cpu-contention | 8.78ms | 27.63ms (26.28..33.00) | 45.3µs | 1.3% |
+| ticker | idle | 524.4µs | 1.02ms (1.02..1.06) | −689ns | 0.0% |
+| ticker | cpu-contention | 21.64ms | 40.53ms (31.12..45.25) | 176.6µs | 56.7% |
+| spin-tail | idle | **116ns** | **183ns (149..201)** | 0ns | 0.0% |
+| spin-tail | cpu-contention | 8.06ms | 29.17ms (27.06..29.18) | 43.1µs | 2.0% |
 
-One structural result *is* robust to that quantisation, because its magnitude is
-an order of magnitude larger than the clock's step size: `sleep-delta` accumulates
-about 11ms of lateness **per tick** at a 20ms period with 2ms of work, and misses
-100% of its deadlines within a few hundred ticks, while the other three strategies
-hold drift near zero and miss none. That is the difference between a loop that is
-merely imprecise and one that is wrong.
+### darwin/arm64, 3 cores
 
-Results on hosts that clear the gate will be added with the methodology below
-followed exactly, including the Go version, since the sleep and clock behaviour
-being measured is a property of the runtime as much as the OS.
+| strategy | scenario | median | p99 (min..max) | drift/tick | missed |
+|---|---|---|---|---|---|
+| sleep-delta | idle | 385.51ms | 689.32ms (684.00..745.00) | 4.06ms | 100.0% |
+| sleep-delta | cpu-contention | 5179.33ms | 8419.34ms (8188.64..8588.49) | 46.40ms | 100.0% |
+| absolute-deadline | idle | 1.05ms | 9.52ms (7.65..20.48) | 5.7µs | 0.0% |
+| absolute-deadline | cpu-contention | 30.79ms | 100.52ms (89.42..105.30) | 298.8µs | 64.0% |
+| ticker | idle | 1.10ms | 8.88ms (5.49..17.10) | −15.0µs | 0.0% |
+| ticker | cpu-contention | 7207.62ms | 11977.55ms (11422.78..13725.04) | 69.83ms | 100.0% |
+| spin-tail | idle | 65.8µs | 63.50ms (37.18..65.17) | −269ns | 6.0% |
+| spin-tail | cpu-contention | 55.92ms | 190.52ms (150.35..207.02) | −74.4µs | 79.3% |
+
+The macOS idle rows carry a tail that an idle machine should not produce — a 6%
+miss rate for `spin-tail` while doing nothing means the busy-wait goroutine was
+descheduled, so that runner was not idle. Those figures describe a noisy shared
+VM rather than a property of macOS, and they are reproduced here rather than
+quietly dropped.
+
+### What the numbers say
+
+**`sleep-delta` is not slightly worse, it is wrong.** It accumulates 2.16ms of
+lateness *per tick* on Linux and misses every deadline within 150 ticks. The
+other three miss none on an idle host. This is the difference between a loop
+that is imprecise and a loop that cannot hold a rate at all, and it is the loop
+most people write first.
+
+**`spin-tail` buys three orders of magnitude, and a core.** 116ns median against
+`absolute-deadline`'s 519.6µs on an idle Linux host, with a p99 of 183ns against
+1.05ms. Under contention that advantage disappears entirely — 2.0% missed against
+1.3% — because a busy-wait cannot help when there is no core to wait on. It is
+the right answer for a dedicated audio thread and the wrong one for a loop
+sharing a machine.
+
+**`time.Ticker` degrades far worse under load than a hand-written deadline loop.**
+On the same Linux host at the same period, `ticker` misses **56.7%** of deadlines
+under contention where `absolute-deadline` misses **1.3%**; on macOS it collapses
+to 100%. A `Ticker`'s channel buffers a single tick and silently discards the
+rest when the receiver falls behind, so the loop is never told. This is the
+result worth taking away: the idle columns make `ticker` and `absolute-deadline`
+look interchangeable, and they are not.
+
+**A host can hold a cadence it cannot measure.** Windows sleeps accurately enough
+for a 20ms period but reads a monotonic clock that advances in ~0.7–1.0ms steps,
+so `cadence run` refuses there. The Go upgrade below fixed the first problem and
+left the second untouched.
+
+### Platform characteristics
+
+| host | Go | clock resolution | sleep granularity (1ms requested) | read cost |
+|---|---|---|---|---|
+| linux/amd64, CI | 1.27.1 | 30ns | 1.07ms | 57ns |
+| darwin/arm64, CI | 1.27.1 | 42ns | 1.19ms | 66ns |
+| windows/amd64, CI | 1.27.1 | 670µs | 1.56ms | 7ns |
+| windows/amd64, local | 1.27.0 | 1.00ms | 1.52ms | 5ns |
+| windows/amd64, local | 1.17.7 | 1.00ms | **15.52ms** | 5ns |
+
+The last two rows are the same machine before and after a toolchain upgrade.
+Under Go 1.17 a 1ms sleep took 15.52ms and `time.Sleep(20ms)` took ~31ms — two
+quanta of Windows' 15.6ms default timer — so **a 20ms cadence could not be held
+by sleeping at all**, however the loop was written. Under Go 1.27 the same
+machine sleeps in ~1.5ms. Clock resolution did not move, which is why both
+Windows rows still fail the adequacy gate: a clock quantised to ~1ms cannot
+separate strategies that differ by hundreds of nanoseconds.
 
 ## Methodology
 
