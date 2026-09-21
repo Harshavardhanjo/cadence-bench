@@ -22,10 +22,47 @@ reproduce on an idle laptop. The four strategies compared are `sleep-delta`
 slack window, then busy-wait).
 
 ```
-cmd/cadence ──┬── internal/clock    clock resolution, sleep granularity, read cost
-              └── internal/run ──┬── internal/pacer   the four strategies
-                                 ├── internal/load    encode work, CPU contention, GC churn
-                                 └── internal/stats   nearest-rank percentiles
+cmd/cadence ──┐
+ui (wasm) ────┴─┬── internal/clock    clock resolution, sleep granularity, read cost
+                └── internal/run ──┬── internal/pacer   the four strategies
+                                   ├── internal/load    encode work, CPU contention, GC churn
+                                   └── stats            nearest-rank percentiles, shared
+```
+
+`stats` is exported rather than internal because
+[jitter-bench](https://github.com/Harshavardhanjo/jitter-bench) and
+[turn-bench](https://github.com/Harshavardhanjo/turn-bench) import it, so a p99
+means the same thing in all three.
+
+## In the browser
+
+There is also a **browser UI** at
+**[cadence-bench.harshavardhanjo.com](https://cadence-bench.harshavardhanjo.com)**,
+running this harness compiled to WebAssembly. Source in [ui/](ui).
+
+Unlike its siblings' UIs, which run deterministic simulations, this one runs a
+measurement, and a measurement describes whatever machine it runs on. The page
+therefore measures the visitor's browser: a single-threaded Go runtime in a Web
+Worker, sleeping on `setTimeout` and reading a `performance.now` that browsers
+deliberately coarsen. It runs the same probe first and the same clock adequacy
+gate, and if the gate refuses a period, the page refuses it too, with the
+override the CLI calls `-force`. The site is served cross-origin isolated
+because that is what earns the finer clock, 5us instead of 100us in Chrome.
+
+Two things differ from the CLI, and the page says so:
+
+- **Contention comes from Web Workers, and GC churn is not offered.** Both CLI
+  scenarios start goroutines that never block. `js/wasm` has one thread and no
+  asynchronous preemption, so such a goroutine takes the thread and the paced
+  loop never wakes again.
+- **The probe takes 40 samples instead of 200**, because every clock read
+  crosses from Go into JavaScript.
+
+What carries over is the ordering. `sleep-delta` drifts in a browser for the
+same reason it drifts on a server.
+
+```
+cd ui && npm install && npm run dev
 ```
 
 ## What it measures

@@ -52,6 +52,43 @@ jobs:
       - name: go build
         run: go build ./...
 
+      - name: wasm build
+        # The browser UI runs this harness rather than a port of it, so a wasm
+        # target that stops compiling has to fail the build.
+        env:
+          GOOS: js
+          GOARCH: wasm
+        run: go build -o /dev/null ./wasm
+
+  ui:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - run: npm ci
+        working-directory: ui
+
+      - name: typecheck
+        run: npx tsc --noEmit
+        working-directory: ui
+
+      - name: build
+        # The build script compiles the wasm first, so this also proves the Go and
+        # the UI still agree on the exported interface.
+        run: npm run build
+        working-directory: ui
+
   probe:
     # Publishes each runner's clock resolution and sleep granularity into the
     # job log. These are the figures that decide whether a host can measure a
